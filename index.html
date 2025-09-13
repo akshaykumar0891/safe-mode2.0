@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Safety Mode</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+</head>
+<body class="bg-[#1a1a2e] text-white flex items-center justify-center h-screen">
+  <div class="container max-w-md w-full bg-[#162447] rounded-xl shadow-xl p-6 text-center">
+    <h1 class="text-3xl font-bold mb-2">AI Safety Mode</h1>
+    <p class="text-gray-400 mb-6">Voice-activated emergency alert</p>
+
+    <div id="status" class="bg-gray-700 text-gray-200 py-2 px-4 rounded-lg mb-6 w-full font-semibold">
+      Press the switch to begin.
+    </div>
+
+    <div id="toggleBtn" class="switch-container w-24 h-12 bg-gray-600 rounded-full relative cursor-pointer mb-6">
+      <div class="switch-thumb w-10 h-10 bg-gray-200 rounded-full absolute top-1 left-1 transition-transform"></div>
+    </div>
+
+    <div id="alertMessage" class="hidden bg-red-800 text-white p-4 rounded-lg text-lg font-bold">
+      🚨 EMERGENCY ALERT TRIGGERED!
+      <p class="text-sm font-normal mt-1">Alerts sent to police and contacts.</p>
+      <div id="locationInfo" class="text-gray-300 mt-2 text-sm"></div>
+      <button id="resetBtn" class="mt-4 bg-white text-red-800 font-bold py-2 px-4 rounded-full shadow-lg">
+        Dismiss Alert
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const toggleBtn = document.getElementById("toggleBtn");
+    const thumb = toggleBtn.querySelector(".switch-thumb");
+    const statusDiv = document.getElementById("status");
+    const alertMessage = document.getElementById("alertMessage");
+    const locationInfo = document.getElementById("locationInfo");
+    const resetBtn = document.getElementById("resetBtn");
+
+    let isListening = false;
+    let recognition;
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.lang = "en-US";
+
+      recognition.onstart = () => {
+        isListening = true;
+        statusDiv.textContent = "Listening for keyword 'help'...";
+        toggleBtn.classList.add("bg-blue-600");
+        thumb.style.transform = "translateX(3rem)";
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase();
+        if (transcript.includes("help")) triggerAlert(transcript);
+      };
+
+      recognition.onend = () => {
+        isListening = false;
+        toggleBtn.classList.remove("bg-blue-600");
+        thumb.style.transform = "translateX(0)";
+      };
+
+      recognition.onerror = (e) => {
+        console.error("Speech error:", e.error);
+        statusDiv.textContent = "Speech recognition error: " + e.error;
+      };
+    } else {
+      statusDiv.textContent = "Speech Recognition not supported.";
+    }
+
+    function triggerAlert(transcript) {
+      recognition.stop();
+      statusDiv.textContent = "Fetching location...";
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const payload = {
+              location: {
+                latitude: pos.coords.latitude,
+                longitude: pos.coords.longitude
+              },
+              audioTranscript: transcript
+            };
+            sendAlert(payload);
+          },
+          (err) => {
+            const payload = {
+              location: "Location unavailable",
+              audioTranscript: transcript
+            };
+            sendAlert(payload);
+          }
+        );
+      } else {
+        const payload = {
+          location: "Geolocation not supported",
+          audioTranscript: transcript
+        };
+        sendAlert(payload);
+      }
+    }
+
+    function sendAlert(payload) {
+      fetch("http://localhost:3000/send-sms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+        .then((res) => res.json())
+        .then((data) => showAlert(payload, data.success))
+        .catch((err) => {
+          showAlert(payload, false);
+        });
+    }
+
+    function showAlert(payload, success) {
+      const loc = typeof payload.location === "object"
+        ? `Lat: ${payload.location.latitude.toFixed(4)}, Lon: ${payload.location.longitude.toFixed(4)}`
+        : payload.location;
+
+      let mapEmbed = "";
+      if (typeof payload.location === "object" && payload.location.latitude && payload.location.longitude) {
+        const { latitude, longitude } = payload.location;
+        mapEmbed = `
+          <iframe
+            width="100%"
+            height="200"
+            frameborder="0"
+            style="border:0; border-radius: 8px; margin-top: 10px;"
+            src="https://www.google.com/maps?q=${latitude},${longitude}&hl=es;z=14&output=embed"
+            allowfullscreen>
+          </iframe>
+          <div class="mt-2">
+            <a href="https://www.google.com/maps?q=${latitude},${longitude}" target="_blank" class="text-blue-300 underline">View on Google Maps</a>
+          </div>
+        `;
+      }
+
+      locationInfo.innerHTML = `
+        <p>Location: ${loc}</p>
+        <p>Transcript: "${payload.audioTranscript}"</p>
+        <p>Status: ${success ? "✅ SMS Sent" : "❌ SMS Failed"}</p>
+        ${mapEmbed}
+      `;
+
+      statusDiv.textContent = "🚨 EMERGENCY ALERT TRIGGERED!";
+      alertMessage.classList.remove("hidden");
+    }
+
+    resetBtn.addEventListener("click", () => {
+      alertMessage.classList.add("hidden");
+      statusDiv.textContent = "Press the switch to begin.";
+    });
+
+    toggleBtn.addEventListener("click", () => {
+      if (isListening) recognition.stop();
+      else recognition.start();
+    });
+  </script>
+</body>
+</html>
